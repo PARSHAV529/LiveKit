@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import "./App.css";
 
-const WS_URL = "wss://livekit-1-t2mj.onrender.com";
+const WS_URL = import.meta.env.VITE_WS_URL;
 
 export default function App() {
   const [status, setStatus] = useState("idle");

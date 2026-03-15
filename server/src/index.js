@@ -1,5 +1,5 @@
-const http = require("http");
-const WebSocket = require("ws");
+import { createServer } from "http";
+import { Server } from "ws";
 
 const QA = {
   hello: "Hey! I'm VoiceAI. How can I help?",
@@ -19,13 +19,12 @@ function getAnswer(text) {
   return "I'm not sure about that yet!";
 }
 
-// HTTP server so Render detects an open port
-const server = http.createServer((req, res) => {
+const server = createServer((req, res) => {
   res.writeHead(200);
   res.end("voice server running");
 });
 
-const wss = new WebSocket.Server({ server });
+const wss = new Server({ server });
 
 wss.on("connection", (ws) => {
   console.log("client connected");
@@ -41,10 +40,8 @@ wss.on("connection", (ws) => {
   ws.on("close", () => console.log("client disconnected"));
 });
 
-// use PORT env var from Render, fallback to 3001 locally
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT;
 
-// listen on 0.0.0.0 so Render can detect it
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`server running on port ${PORT}`);
 });
