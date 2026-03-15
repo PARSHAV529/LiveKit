@@ -1,5 +1,5 @@
 import { createServer } from "http";
-import { Server } from "ws";
+import { WebSocketServer } from "ws";
 
 const QA = {
   hello: "Hey! I'm VoiceAI. How can I help?",
@@ -24,7 +24,7 @@ const server = createServer((req, res) => {
   res.end("voice server running");
 });
 
-const wss = new Server({ server });
+const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws) => {
   console.log("client connected");
@@ -39,6 +39,8 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => console.log("client disconnected"));
 });
+
+process.loadEnvFile();
 
 const PORT = process.env.PORT;
 
