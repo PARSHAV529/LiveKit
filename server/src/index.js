@@ -2,7 +2,7 @@ import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import Groq from "groq-sdk";
 
-process.loadEnvFile();
+import "dotenv/config";
 
 const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
