@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import "./App.css";
 
 const WS_URL = "wss://livekit-1-t2mj.onrender.com";
@@ -17,7 +17,8 @@ export default function App() {
     window.speechSynthesis.speak(u);
   };
 
-  const startRecording = () => {
+  const startRecording = useCallback(() => {
+    if (!connected || status !== "idle") return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return alert("Use Chrome.");
 
@@ -40,7 +41,7 @@ export default function App() {
 
     r.start();
     setStatus("recording");
-  };
+  }, [connected, status]);
 
   const stopRecording = () => {
     try {
@@ -64,8 +65,7 @@ export default function App() {
 
   useEffect(() => {
     function onKeyDown(e) {
-      if (e.key.toLowerCase() === "r" && !e.repeat && status === "idle")
-        startRecording();
+      if (e.key.toLowerCase() === "r" && status === "idle") startRecording();
     }
     function onKeyUp(e) {
       if (e.key.toLowerCase() === "r" && status === "recording")
@@ -77,7 +77,7 @@ export default function App() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [status]);
+  }, [startRecording, status]);
 
   return (
     <div className="app">
