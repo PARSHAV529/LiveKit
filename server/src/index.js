@@ -1,5 +1,10 @@
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
+import Groq from "groq-sdk";
+
+process.loadEnvFile();
+
+const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const QA = {
   hello: "Hey! I'm VoiceAI. How can I help?",
@@ -29,20 +34,63 @@ const wss = new WebSocketServer({ server });
 wss.on("connection", (ws) => {
   console.log("client connected");
 
-  ws.on("message", (data) => {
+  ws.on("message", async (data) => {
     const msg = JSON.parse(data);
-    if (msg.type === "text") {
+    if (msg.type !== "text") return;
+
+    const mode = msg.mode || "v1";
+
+    // v1 — static
+    if (mode === "v1") {
       const answer = getAnswer(msg.text);
-      ws.send(JSON.stringify({ type: "answer", text: answer }));
+      ws.send(JSON.stringify({ type: "word", word: answer }));
+      ws.send(JSON.stringify({ type: "done" }));
+      return;
+    }
+
+    // v2 — Groq streaming
+    try {
+      const stream = await client.chat.completions.create({
+        model: "llama-3.1-8b-instant",
+        max_tokens: 150,
+        stream: true,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a helpful voice assistant. Keep replies short — max 2 sentences.",
+          },
+          { role: "user", content: msg.text },
+        ],
+      });
+
+      let buffer = "";
+
+      for await (const chunk of stream) {
+        const word = chunk.choices[0]?.delta?.content || "";
+        buffer += word;
+        const parts = buffer.split(" ");
+        buffer = parts.pop();
+        for (const w of parts) {
+          if (w) ws.send(JSON.stringify({ type: "word", word: w + " " }));
+        }
+      }
+
+      if (buffer) ws.send(JSON.stringify({ type: "word", word: buffer }));
+      ws.send(JSON.stringify({ type: "done" }));
+    } catch (err) {
+      console.error("Groq error:", err.message);
+      ws.send(
+        JSON.stringify({ type: "word", word: "Sorry, something went wrong." }),
+      );
+      ws.send(JSON.stringify({ type: "done" }));
     }
   });
 
   ws.on("close", () => console.log("client disconnected"));
 });
 
-process.loadEnvFile();
-
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`server running on port ${PORT}`);
