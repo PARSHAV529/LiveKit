@@ -78,15 +78,6 @@ ready for next message
 
 ---
 
-## Deploy server
-
-Deployed on Render. Update this line in `client/src/App.jsx`:
-
-```js
-const WS_URL = "wss://your-app.onrender.com";
-```
-
----
 
 ## Browser support
 
