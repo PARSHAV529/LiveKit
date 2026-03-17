@@ -44,6 +44,35 @@ export default function App() {
     setStatus(s);
   }
 
+  const STATUS_LABELS = {
+    listening: "🎤 listening…",
+    thinking: "💭 thinking…",
+    speaking: "🔊 speaking…",
+  };
+
+  function getStatusLabel() {
+    if (!connected) return "connecting…";
+    if (!started) return "press start";
+    return STATUS_LABELS[status] || "ready";
+  }
+
+  function switchMode(newMode) {
+    if (newMode === mode) return;
+    window.speechSynthesis.cancel();
+    bufferRef.current = "";
+    setAiReply("");
+    setMode(newMode);
+    if (started) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+      transcriptRef.current = "";
+      setTranscript("");
+      resumeRecognition();
+    } else {
+      setS("idle");
+    }
+  }
+
   useEffect(() => {
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
@@ -238,13 +267,13 @@ export default function App() {
       <div className="mode-selector">
         <button
           className={`mode-btn ${mode === "v1" ? "active" : ""}`}
-          onClick={() => { setMode("v1"); window.speechSynthesis.cancel(); bufferRef.current = ""; }}
+          onClick={() => switchMode("v1")}
         >
           <span className="mode-tag">v1</span>Static
         </button>
         <button
           className={`mode-btn ${mode === "v2" ? "active" : ""}`}
-          onClick={() => { setMode("v2"); window.speechSynthesis.cancel(); bufferRef.current = ""; }}
+          onClick={() => switchMode("v2")}
         >
           <span className="mode-tag ai">v2</span>AI
         </button>
@@ -286,14 +315,7 @@ export default function App() {
         <p className="transcript ai-reply">🤖 "{aiReply}"</p>
       )}
 
-      <p className="state">
-        {!connected && "connecting…"}
-        {connected && !started && "press start"}
-        {started && status === "idle" && "ready"}
-        {status === "listening" && "🎤 listening…"}
-        {status === "thinking" && "💭 thinking…"}
-        {status === "speaking" && "🔊 speaking…"}
-      </p>
+      <p className="state">{getStatusLabel()}</p>
 
       <button
         className={`btn-mic ${status === "listening" ? "active" : ""} ${status === "speaking" ? "speaking" : ""}`}
