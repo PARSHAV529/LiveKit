@@ -184,8 +184,47 @@ body {
   }
 }
 
+/* live transcript debug */
+.transcript {
+  font-size: 12px;
+  color: #4ade80;
+  font-family: monospace;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 8px 14px;
+  max-width: 320px;
+  text-align: center;
+  word-break: break-word;
+  animation: fade-in 0.2s ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.transcript.ai-reply {
+  color: #a78bfa;
+  border-color: #a78bfa33;
+}
+
 .label {
   font-size: 11px;
   color: #333;
   height: 14px;
+}
+
+.level-track {
+  width: 200px;
+  height: 3px;
+  background: #1a1a1a;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.level-fill {
+  height: 100%;
+  background: #4ade80;
+  border-radius: 2px;
+  transition: width 0.05s ease;
 }
