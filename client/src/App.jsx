@@ -24,6 +24,8 @@ export default function App() {
   const [level, setLevel] = useState(0);
   const [transcript, setTranscript] = useState("");
   const [aiReply, setAiReply] = useState("");
+  const [isStarting, setIsStarting] = useState(false);
+  const [micError, setMicError] = useState("");
 
   const wsRef = useRef(null);
   const bufferRef = useRef("");
@@ -74,20 +76,39 @@ export default function App() {
   }
 
   useEffect(() => {
-    const ws = new WebSocket(WS_URL);
-    wsRef.current = ws;
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "word") bufferRef.current += msg.word;
-      if (msg.type === "done") {
-        const text = bufferRef.current.trim();
-        bufferRef.current = "";
-        if (text) speak(text);
+    let reconnectTimeout;
+    
+    function connect() {
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+      
+      ws.onopen = () => setConnected(true);
+      
+      ws.onclose = () => {
+        setConnected(false);
+        reconnectTimeout = setTimeout(connect, 2000);
+      };
+      
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "word") bufferRef.current += msg.word;
+        if (msg.type === "done") {
+          const text = bufferRef.current.trim();
+          bufferRef.current = "";
+          if (text) speak(text);
+        }
+      };
+    }
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close();
       }
     };
-    return () => ws.close();
   }, []);
 
   function speak(text) {
@@ -187,12 +208,24 @@ export default function App() {
     };
 
     r.onerror = (e) => {
-      if (["no-speech", "aborted"].includes(e.error)) return;
+      console.warn("Speech recognition error:", e.error);
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        stopSession();
+        setMicError("Speech recognition blocked by browser.");
+        return;
+      }
+      if (statusRef.current === "listening" && e.error !== "aborted") {
+        setTimeout(() => resumeRecognition(), 500);
+      }
     };
 
     r.onend = () => {
       if (statusRef.current === "listening") {
-        try { r.start(); } catch {}
+        setTimeout(() => {
+          if (statusRef.current === "listening") {
+            try { r.start(); } catch {}
+          }
+        }, 200);
       }
     };
 
@@ -224,6 +257,9 @@ export default function App() {
   }
 
   async function startSession() {
+    if (isStarting) return;
+    setIsStarting(true);
+    setMicError("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -236,8 +272,11 @@ export default function App() {
       startLevelMeter(stream);
       startRecognition();
       setStarted(true);
-    } catch {
-      alert("Microphone access denied.");
+    } catch (err) {
+      console.error("Mic error:", err);
+      setMicError(err.message || "Microphone access denied.");
+    } finally {
+      setIsStarting(false);
     }
   }
 
@@ -249,6 +288,7 @@ export default function App() {
     setStarted(false);
     setTranscript("");
     setAiReply("");
+    setIsStarting(false);
     setS("idle");
   }
 
@@ -320,10 +360,12 @@ export default function App() {
       <button
         className={`btn-mic ${status === "listening" ? "active" : ""} ${status === "speaking" ? "speaking" : ""}`}
         onClick={started ? stopSession : startSession}
-        disabled={!connected}
+        disabled={!connected || isStarting}
       >
-        {started ? "⏹" : "▶"}
+        {isStarting ? "⏳" : started ? "⏹" : "▶"}
       </button>
+
+      {micError && <p className="error-text" style={{ color: "#ef4444", fontSize: "12px", textAlign: "center", marginTop: "4px" }}>{micError}</p>}
 
       <p className="label">
         {!started && connected ? "press to start" : ""}
