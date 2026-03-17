@@ -2,7 +2,13 @@ import { useRef, useEffect, useState } from "react";
 import "./App.css";
 
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3001";
-const SILENCE_MS = 1500; // ms of silence after speech → auto-send
+const SILENCE_MS = 1500;
+
+function isMobile() {
+  const hasTouch = navigator.maxTouchPoints > 1;
+  const smallScreen = window.screen.width <= 1024;
+  return hasTouch && smallScreen;
+}
 
 const V1_COMMANDS = [
   { say: "hello / hi / hey", reply: "greeting" },
@@ -16,8 +22,8 @@ export default function App() {
   const [mode, setMode] = useState("v1");
   const [started, setStarted] = useState(false);
   const [level, setLevel] = useState(0);
-  const [transcript, setTranscript] = useState(""); // live debug text
-  const [aiReply, setAiReply] = useState(""); // AI response text
+  const [transcript, setTranscript] = useState("");
+  const [aiReply, setAiReply] = useState("");
 
   const wsRef = useRef(null);
   const bufferRef = useRef("");
@@ -30,10 +36,7 @@ export default function App() {
   const transcriptRef = useRef("");
   const silenceTimerRef = useRef(null);
 
-  // Keep modeRef in sync
   useEffect(() => { modeRef.current = mode; }, [mode]);
-
-  // Cancel leftover speech on page load
   useEffect(() => { window.speechSynthesis.cancel(); }, []);
 
   function setS(s) {
@@ -41,7 +44,6 @@ export default function App() {
     setStatus(s);
   }
 
-  // ── WebSocket ──────────────────────────────────────────
   useEffect(() => {
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
@@ -59,9 +61,7 @@ export default function App() {
     return () => ws.close();
   }, []);
 
-  // ── Speak AI reply, then resume listening ──────────────
   function speak(text) {
-    // Pause recognition while AI speaks to prevent looping
     pauseRecognition();
     window.speechSynthesis.cancel();
     setAiReply(text);
@@ -77,12 +77,11 @@ export default function App() {
     window.speechSynthesis.speak(u);
   }
 
-  // ── Send transcript to server ──────────────────────────
   function send(text) {
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
 
-    if (!text.trim()) return; // nothing to send
+    if (!text.trim()) return;
 
     transcriptRef.current = "";
     setTranscript("");
@@ -93,7 +92,6 @@ export default function App() {
     );
   }
 
-  // ── Mic level meter (visual only) ──────────────────────
   function startLevelMeter(stream) {
     const ctx = new AudioContext();
     const src = ctx.createMediaStreamSource(stream);
@@ -120,7 +118,6 @@ export default function App() {
     setLevel(0);
   }
 
-  // ── SpeechRecognition — continuous, always-on ──────────
   function startRecognition() {
     stopRecognition();
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -137,7 +134,6 @@ export default function App() {
     recognitionRef.current = r;
 
     r.onresult = (e) => {
-      // If AI is still speaking and user talks, interrupt
       if (statusRef.current === "speaking") {
         window.speechSynthesis.cancel();
         setS("listening");
@@ -152,7 +148,6 @@ export default function App() {
       setTranscript(text);
 
       if (text) {
-        // Reset silence timer — send after user pauses
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = setTimeout(() => {
           if (statusRef.current === "listening" && transcriptRef.current.trim()) {
@@ -164,11 +159,9 @@ export default function App() {
 
     r.onerror = (e) => {
       if (["no-speech", "aborted"].includes(e.error)) return;
-      console.warn("SpeechRecognition error:", e.error);
     };
 
     r.onend = () => {
-      // Auto-restart if we're supposed to be listening
       if (statusRef.current === "listening") {
         try { r.start(); } catch {}
       }
@@ -188,7 +181,6 @@ export default function App() {
     setTranscript("");
     setS("listening");
     try { recognitionRef.current?.start(); } catch {
-      // If stop() destroyed it, recreate
       startRecognition();
     }
   }
@@ -202,7 +194,6 @@ export default function App() {
     setTranscript("");
   }
 
-  // ── Start / Stop session ───────────────────────────────
   async function startSession() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -227,10 +218,21 @@ export default function App() {
     stopLevelMeter();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     setStarted(false);
+    setTranscript("");
+    setAiReply("");
     setS("idle");
   }
 
-  // ── Render ─────────────────────────────────────────────
+  if (isMobile()) {
+    return (
+      <div className="app mobile-block">
+        <p className="mobile-icon">🖥️</p>
+        <p className="mobile-title">Desktop Only</p>
+        <p className="mobile-msg">This app uses browser speech APIs that only work on desktop Chrome. Please open this on a desktop computer.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <div className="mode-selector">
@@ -277,7 +279,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Debug: live transcript & AI reply */}
       {started && transcript && (
         <p className="transcript">🗣 "{transcript}"</p>
       )}

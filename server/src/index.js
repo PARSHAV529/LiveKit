@@ -40,7 +40,6 @@ wss.on("connection", (ws) => {
 
     const mode = msg.mode || "v1";
 
-    // v1 — static
     if (mode === "v1") {
       const answer = getAnswer(msg.text);
       ws.send(JSON.stringify({ type: "word", word: answer }));
@@ -48,7 +47,6 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    // v2 — Groq streaming
     try {
       const stream = await client.chat.completions.create({
         model: "llama-3.1-8b-instant",
