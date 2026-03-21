@@ -1,260 +1,77 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import "./App.css";
 
-const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3001";
-const SILENCE_MS = 1500;
-
-function isMobile() {
-  const hasTouch = navigator.maxTouchPoints > 1;
-  const smallScreen = window.screen.width <= 1024;
-  return hasTouch && smallScreen;
-}
-
-const V1_COMMANDS = [
-  { say: "hello / hi / hey", reply: "greeting" },
-  { say: "how are you / how r u", reply: "I'm doing great!" },
-  { say: "bye / goodbye", reply: "farewell" },
-];
+import { WS_URL, V1_COMMANDS, STATUS_LABELS } from "./constants";
+import { isMobile } from "./utils/isMobile";
+import { useWebSocket } from "./hooks/useWebSocket";
+import { useSpeechRecognition } from "./hooks/useSpeechRecognition";
+import { useSpeechSynthesis } from "./hooks/useSpeechSynthesis";
+import { useAudioLevel } from "./hooks/useAudioLevel";
 
 export default function App() {
   const [status, setStatus] = useState("idle");
-  const [connected, setConnected] = useState(false);
   const [mode, setMode] = useState("v1");
   const [started, setStarted] = useState(false);
-  const [level, setLevel] = useState(0);
-  const [transcript, setTranscript] = useState("");
   const [aiReply, setAiReply] = useState("");
   const [isStarting, setIsStarting] = useState(false);
   const [micError, setMicError] = useState("");
 
-  const wsRef = useRef(null);
-  const bufferRef = useRef("");
   const statusRef = useRef("idle");
   const modeRef = useRef(mode);
-  const recognitionRef = useRef(null);
-  const audioCtxRef = useRef(null);
+  const bufferRef = useRef("");
   const streamRef = useRef(null);
-  const rafRef = useRef(null);
-  const transcriptRef = useRef("");
-  const silenceTimerRef = useRef(null);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
-  useEffect(() => { window.speechSynthesis.cancel(); }, []);
 
   function setS(s) {
     statusRef.current = s;
     setStatus(s);
   }
 
-  const STATUS_LABELS = {
-    listening: "🎤 listening…",
-    thinking: "💭 thinking…",
-    speaking: "🔊 speaking…",
-  };
 
-  function getStatusLabel() {
-    if (!connected) return "connecting…";
-    if (!started) return "press start";
-    return STATUS_LABELS[status] || "ready";
-  }
-
-  function switchMode(newMode) {
-    if (newMode === mode) return;
-    window.speechSynthesis.cancel();
-    bufferRef.current = "";
-    setAiReply("");
-    setMode(newMode);
-    if (started) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-      transcriptRef.current = "";
-      setTranscript("");
-      resumeRecognition();
-    } else {
-      setS("idle");
-    }
-  }
-
-  useEffect(() => {
-    let reconnectTimeout;
-    
-    function connect() {
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-      
-      ws.onopen = () => setConnected(true);
-      
-      ws.onclose = () => {
-        setConnected(false);
-        reconnectTimeout = setTimeout(connect, 2000);
-      };
-      
-      ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "word") bufferRef.current += msg.word;
-        if (msg.type === "done") {
-          const text = bufferRef.current.trim();
-          bufferRef.current = "";
-          if (text) speak(text);
+  const { connected, send: wsSend } = useWebSocket(WS_URL, {
+    onMessage: useCallback((msg) => {
+      if (msg.type === "word") bufferRef.current += msg.word;
+      if (msg.type === "done") {
+        const text = bufferRef.current.trim();
+        bufferRef.current = "";
+        if (text) {
+          setAiReply(text);
+          ttsRef.current.speak(text);
         }
-      };
-    }
-
-    connect();
-
-    return () => {
-      clearTimeout(reconnectTimeout);
-      if (wsRef.current) {
-        wsRef.current.onclose = null;
-        wsRef.current.close();
       }
-    };
-  }, []);
+    }, []),
+  });
 
-  function speak(text) {
-    pauseRecognition();
-    window.speechSynthesis.cancel();
-    setAiReply(text);
-    setS("speaking");
+  const recognition = useSpeechRecognition({
+    onSilence: useCallback((text) => {
+      setS("thinking");
+      wsSend({ type: "text", text: text.trim(), mode: modeRef.current });
+    }, [wsSend]),
+    onInterrupt: useCallback(() => {
+      ttsRef.current.cancel();
+      setS("listening");
+    }, []),
+  });
 
-    const u = new SpeechSynthesisUtterance(text);
-    u.onend = () => {
-      if (statusRef.current === "speaking") resumeRecognition();
-    };
-    u.onerror = () => {
-      if (statusRef.current === "speaking") resumeRecognition();
-    };
-    window.speechSynthesis.speak(u);
-  }
-
-  function send(text) {
-    clearTimeout(silenceTimerRef.current);
-    silenceTimerRef.current = null;
-
-    if (!text.trim()) return;
-
-    transcriptRef.current = "";
-    setTranscript("");
-    pauseRecognition();
-    setS("thinking");
-    wsRef.current.send(
-      JSON.stringify({ type: "text", text: text.trim(), mode: modeRef.current }),
-    );
-  }
-
-  function startLevelMeter(stream) {
-    const ctx = new AudioContext();
-    const src = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.3;
-    src.connect(analyser);
-    audioCtxRef.current = ctx;
-
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    function tick() {
-      analyser.getByteFrequencyData(data);
-      const voiceBins = data.slice(3, 35);
-      const avg = voiceBins.reduce((a, b) => a + b, 0) / voiceBins.length;
-      setLevel(Math.min(100, avg * 2));
-      rafRef.current = requestAnimationFrame(tick);
-    }
-    tick();
-  }
-
-  function stopLevelMeter() {
-    cancelAnimationFrame(rafRef.current);
-    try { audioCtxRef.current?.close(); } catch {}
-    setLevel(0);
-  }
-
-  function startRecognition() {
-    stopRecognition();
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
-
-    transcriptRef.current = "";
-    setTranscript("");
-    setS("listening");
-
-    const r = new SR();
-    r.lang = "en-US";
-    r.continuous = true;
-    r.interimResults = true;
-    recognitionRef.current = r;
-
-    r.onresult = (e) => {
+  const tts = useSpeechSynthesis({
+    onStart: useCallback(() => {
+      recognition.pause();
+      setS("speaking");
+    }, [recognition]),
+    onEnd: useCallback(() => {
       if (statusRef.current === "speaking") {
-        window.speechSynthesis.cancel();
+        recognition.resume();
         setS("listening");
       }
+    }, [recognition]),
+  });
 
-      const text = Array.from(e.results)
-        .map((res) => res[0].transcript)
-        .join(" ")
-        .trim();
+  const ttsRef = useRef(tts);
+  useEffect(() => { ttsRef.current = tts; }, [tts]);
 
-      transcriptRef.current = text;
-      setTranscript(text);
+  const level = useAudioLevel(started ? streamRef.current : null);
 
-      if (text) {
-        clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = setTimeout(() => {
-          if (statusRef.current === "listening" && transcriptRef.current.trim()) {
-            send(transcriptRef.current);
-          }
-        }, SILENCE_MS);
-      }
-    };
-
-    r.onerror = (e) => {
-      console.warn("Speech recognition error:", e.error);
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        stopSession();
-        setMicError("Speech recognition blocked by browser.");
-        return;
-      }
-      if (statusRef.current === "listening" && e.error !== "aborted") {
-        setTimeout(() => resumeRecognition(), 500);
-      }
-    };
-
-    r.onend = () => {
-      if (statusRef.current === "listening") {
-        setTimeout(() => {
-          if (statusRef.current === "listening") {
-            try { r.start(); } catch {}
-          }
-        }, 200);
-      }
-    };
-
-    try { r.start(); } catch {}
-  }
-
-  function pauseRecognition() {
-    clearTimeout(silenceTimerRef.current);
-    silenceTimerRef.current = null;
-    try { recognitionRef.current?.stop(); } catch {}
-  }
-
-  function resumeRecognition() {
-    transcriptRef.current = "";
-    setTranscript("");
-    setS("listening");
-    try { recognitionRef.current?.start(); } catch {
-      startRecognition();
-    }
-  }
-
-  function stopRecognition() {
-    clearTimeout(silenceTimerRef.current);
-    silenceTimerRef.current = null;
-    try { recognitionRef.current?.abort(); } catch {}
-    recognitionRef.current = null;
-    transcriptRef.current = "";
-    setTranscript("");
-  }
 
   async function startSession() {
     if (isStarting) return;
@@ -262,16 +79,12 @@ export default function App() {
     setMicError("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       streamRef.current = stream;
-      startLevelMeter(stream);
-      startRecognition();
+      recognition.start();
       setStarted(true);
+      setS("listening");
     } catch (err) {
       console.error("Mic error:", err);
       setMicError(err.message || "Microphone access denied.");
@@ -281,26 +94,59 @@ export default function App() {
   }
 
   function stopSession() {
-    window.speechSynthesis.cancel();
-    stopRecognition();
-    stopLevelMeter();
+    tts.cancel();
+    recognition.stop();
     streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
     setStarted(false);
-    setTranscript("");
     setAiReply("");
     setIsStarting(false);
     setS("idle");
   }
+
+
+  function switchMode(newMode) {
+    if (newMode === mode) return;
+    tts.cancel();
+    bufferRef.current = "";
+    setAiReply("");
+    setMode(newMode);
+
+    if (started) {
+    
+      recognition.stop();
+      setTimeout(() => {
+        recognition.start();
+        setS("listening");
+      }, 300);
+    } else {
+      setS("idle");
+    }
+  }
+
+
+  function getStatusLabel() {
+    if (!connected) return "connecting…";
+    if (!started) return "press start";
+    return STATUS_LABELS[status] || "ready";
+  }
+
+  useEffect(() => { window.speechSynthesis.cancel(); }, []);
+
 
   if (isMobile()) {
     return (
       <div className="app mobile-block">
         <p className="mobile-icon">🖥️</p>
         <p className="mobile-title">Desktop Only</p>
-        <p className="mobile-msg">This app uses browser speech APIs that only work on desktop Chrome. Please open this on a desktop computer.</p>
+        <p className="mobile-msg">
+          This app uses browser speech APIs that only work on desktop Chrome.
+          Please open this on a desktop computer.
+        </p>
       </div>
     );
   }
+
 
   return (
     <div className="app">
@@ -331,7 +177,6 @@ export default function App() {
           ))}
         </div>
       )}
-
       {mode === "v2" && !started && (
         <p className="ai-hint">powered by Groq — ask anything</p>
       )}
@@ -348,8 +193,8 @@ export default function App() {
         </div>
       )}
 
-      {started && transcript && (
-        <p className="transcript">🗣 "{transcript}"</p>
+      {started && recognition.transcript && (
+        <p className="transcript">🗣 "{recognition.transcript}"</p>
       )}
       {started && aiReply && (
         <p className="transcript ai-reply">🤖 "{aiReply}"</p>
@@ -365,7 +210,11 @@ export default function App() {
         {isStarting ? "⏳" : started ? "⏹" : "▶"}
       </button>
 
-      {micError && <p className="error-text" style={{ color: "#ef4444", fontSize: "12px", textAlign: "center", marginTop: "4px" }}>{micError}</p>}
+      {(micError || recognition.error) && (
+        <p className="error-text" style={{ color: "#ef4444", fontSize: "12px", textAlign: "center", marginTop: "4px" }}>
+          {micError || recognition.error}
+        </p>
+      )}
 
       <p className="label">
         {!started && connected ? "press to start" : ""}
